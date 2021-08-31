@@ -1,0 +1,239 @@
+
+const QUIZ_API = 'quiz.json';
+const RESULT_API = 'result.json';
+const QUIZ_ID = 12;  // Used to identify the quiz in the JSON file.
+
+let jsonQuizData;
+let questionNo = 0; // Current question number
+let answerSubmitted = false; // Is set to true once the user submits an answer to the current question and still hasn't proceeded to the next one.
+let points = 0; // User's current score
+let maxPoints = 0; // Max possible score for quiz
+
+/*
+* When the document is ready, adds a key listener to enable playing the quiz using the keyboard only, and loads quiz data.
+ */
+$(document).ready(() => {
+    // Allow submitting answer with Enter key
+    document.addEventListener('keyup', (event) => {
+        if (event.keyCode === 13) // 13 is the Enter key
+            $('#next-btn').click();
+    });
+
+    $.getJSON( QUIZ_API, { quiz_id: QUIZ_ID})
+        .done((resp) => {
+            jsonQuizData = resp;
+            $('h1').text(resp.title);
+            $('h2').html('&ldquo;' + resp.description + '&rdquo;');
+            updateQuestionDisplay(resp.questions[0]);
+        })
+        .fail(() => {
+            alert('The quiz is not available at the moment! Please try again later.');
+        });
+});
+
+/*
+* Displays the current question and its possible answers
+* @param {Object} qObject - Object representing the current question
+*/
+function updateQuestionDisplay(qObject) {
+    /* Question image */
+    const imageAlt = `Question ${questionNo + 1} image`;
+    $('#question').find('img').attr({
+        src: qObject.img,
+        alt: imageAlt
+    });
+
+    /* Question header (Question number, question title, question points) */
+    let maxStr = ''; // Questions with multiple answers will have the word 'max' after the number of points, in order to show that the user may receive fewer points for a partially correct answer.
+    if (qObject.question_type === 'mutiplechoice-multiple')
+        maxStr = ' max';
+    let ptsStr = qObject.points === 1? ' pt': ' pts';
+    $('#qTitle').html(qObject.q_id + '. ' + qObject.title + ' <strong>[' + qObject.points + ptsStr + maxStr + ']</strong>');
+
+    /* Question type */
+    let inputType;
+    switch(qObject.question_type) {
+        case 'mutiplechoice-multiple':
+            inputType = 'checkbox';
+            break;
+        default:
+            inputType = 'radio';
+    }
+
+    /* Answers */
+    const inputsContainer = $('#inputs');
+    inputsContainer.css('text-align', 'left');
+
+    if (qObject.question_type === 'truefalse') {
+        inputsContainer.append(`
+        <div class="option">
+            <input type="${inputType}" id="true" name="${qObject.q_id}" value="true">
+            <label for="true">True</label>
+        </div>
+        `);
+        inputsContainer.append(`
+        <div class="option">
+            <input type="${inputType}" id="false" name="${qObject.q_id}" value="false">
+            <label for="false">False</label>
+        </div>
+        `);
+    }
+    else
+        qObject.possible_answers.forEach((item) => {
+            inputsContainer.append(`
+            <div class="option">
+                <input type="${inputType}" id="${item.a_id}" name="${qObject.q_id}" value="${item.a_id}">
+                <label for="${item.a_id}">${item.caption}</label>
+            </div>
+            `);
+        });
+}
+
+/*
+* Performs appropriate task on clicking button based on answerSubmitted
+ */
+function nextButtonClicked() {
+    if (answerSubmitted)
+        nextQuestion();
+    else
+        submitAnswer();
+}
+
+/*
+* Validates and submits the user's answer, changes document and styles accordingly.
+ */
+function submitAnswer() {
+    const inputs = $('input');
+    let ans = [];   // ans is an array to accomodate the case of multiple answer questions.
+    inputs.each((i, obj) => {
+        if (obj.checked)
+            ans.push(obj.id);   // obj.id is always a string.
+    });
+    if (!ans.length)
+        alert('No answer selected!');
+    else {  // If an answer was selected
+        answerSubmitted = true;
+        checkAnswer(ans);
+
+        const nextBtn = $('#next-btn');
+
+        inputs.attr('disabled', 'disabled');
+        nextBtn.attr('disabled', 'disabled');
+        $('#inputs').css('text-align', 'center');
+
+        let newButtonText = jsonQuizData.questions[questionNo + 1]? 'Next question': 'See results!';
+
+        $(this).delay(500).queue(() => {
+            nextBtn.text(newButtonText);
+            nextBtn.removeAttr('disabled');
+            $(this).dequeue();
+        });
+    }
+}
+
+/*
+* Performs 2 tasks:
+* 1. Add css to indicate the correct answer and highlight the user's chosen answer.
+* 2. Check answer and update points.
+* @param {string[]} answer - User's submitted answer
+ */
+function checkAnswer(answer) {
+    const correctAnswer = jsonQuizData.questions[questionNo].correct_answer;
+    let pointsToAward = jsonQuizData.questions[questionNo].points;
+    maxPoints += pointsToAward; // Update maxPoints for the current question.
+
+    /* 1. Add css to indicate the correct answer and highlight the user's answer. */
+    if (jsonQuizData.questions[questionNo].question_type === 'truefalse') { // For true-false questions it is straightforward
+        $('label[for="' + correctAnswer.toString() + '"]').addClass('correct');
+        $('label[for="' + (!(correctAnswer)).toString() + '"]').addClass('incorrect');
+        $('label[for="' + answer.toString() + '"]').parent().addClass('selected');
+    }
+    else {  // For questions which are not of true-false type
+        jsonQuizData.questions[questionNo].possible_answers.forEach((obj, i) => {
+            if (answer.includes(obj.a_id.toString()))
+                $('label[for="' + obj.a_id.toString() + '"]').parent().addClass('selected');
+            if (typeof correctAnswer === 'object' && correctAnswer != null && correctAnswer.includes(jsonQuizData.questions[questionNo].possible_answers[i].a_id) || correctAnswer === obj.a_id)
+                $('label[for="' + obj.a_id.toString() + '"]').addClass('correct');
+            else
+                $('label[for="' + obj.a_id.toString() + '"]').addClass('incorrect');
+        });
+    }
+
+    /* 2. Check answer and update points. */
+    if (typeof jsonQuizData.questions[questionNo].correct_answer === 'object' && jsonQuizData.questions[questionNo].correct_answer != null) { // The if statement checks if it is a question with multiple answers. This is because 'object' is the type of arrays, and of null. Since correct_answer might be null, we check if it's not null as well.
+        const noOfItems = jsonQuizData.questions[questionNo].possible_answers.length;
+        let resultBool = new Array(noOfItems).fill(false);  // For each option, resultBool[i] is false if the user's answer is wrong, else true.
+
+        // Setting resultBool
+        jsonQuizData.questions[questionNo].possible_answers.forEach((obj, i) => {
+            if (correctAnswer.includes(obj.a_id) && answer.includes(obj.a_id.toString()) || !correctAnswer.includes(obj.a_id) && !answer.includes(obj.a_id.toString()))
+                resultBool[i] = true;
+        });
+
+        resultBool.forEach((obj) => {
+           if (!obj)
+               pointsToAward = pointsToAward - !!pointsToAward;    // Decrements pointsToAward by 1 if it's greater than 0.
+        });
+
+        points += pointsToAward;
+    }
+    else {  // Questions with a single answer
+        if (answer[0] === correctAnswer.toString())
+            points += pointsToAward;
+    }
+}
+
+/*
+* If a subsequent question exists, increments questionNo and displays the next question
+* with the help of updateQuestionDisplay(). Else, calls displayResults.
+ */
+function nextQuestion() {
+    if  (jsonQuizData.questions[questionNo + 1]) { // If there is a next question
+        // Remove current options
+        $('.option').each((i, obj) => {
+            obj.remove();
+        });
+
+        // Replace image with placeholder image so users with slow internet connections do not see the previous level's image while the new level's image is still loading.
+        $('.img-container-small').find('img').attr('src', 'img/placeholder-image.png');
+
+        // Set button text
+        $('#next-btn').text('Submit');
+
+        // Set answerSubmitted to false
+        answerSubmitted = false;
+
+        // Increment question number and display next question
+        updateQuestionDisplay(jsonQuizData.questions[++questionNo]);
+    }
+    else
+        displayResults();
+}
+
+/*
+* Calculates the user's score as a percentage, loads the result data, finds the user's
+* result group, displays the user's result.
+ */
+function displayResults() {
+    const pointsPercent = Math.round(points / maxPoints * 100);
+    let resultGroupIndex = 0;
+
+    let jsonResultsData;
+    $.getJSON( RESULT_API, { quiz_id: QUIZ_ID})
+        .done((resp) => {
+            jsonResultsData = resp;
+            jsonResultsData.results.forEach((obj, i) => {
+                if (pointsPercent >= obj.minpoints)
+                    resultGroupIndex = i;
+            });
+
+            $('main').html(`
+            <section>
+                <h3>Quiz completed! Points earned: <strong>${points}/${maxPoints} (${pointsPercent}%)</strong></h3>
+                <p class="huge-font m-y-sm">${jsonResultsData.results[resultGroupIndex].title}</p>
+                <div class="img-container-medium"><img src="${jsonResultsData.results[resultGroupIndex].img}" alt="Result image"></div>
+                <p class="p-b-md">${jsonResultsData.results[resultGroupIndex].message}</p>
+            </section>
+            `);
+        })
+     
